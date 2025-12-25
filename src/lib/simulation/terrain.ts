@@ -1,5 +1,6 @@
 import { Tile, WaterBody, BuildingType, Building } from '@/types/game';
 import { generateWaterName } from '../names';
+import { createBuilding, createTile } from './core';
 
 function noise2D(x: number, y: number, seed: number = 42): number {
   const n = Math.sin(x * 12.9898 + y * 78.233 + seed) * 43758.5453123;
@@ -56,7 +57,7 @@ export function perlinNoise(x: number, y: number, seed: number, octaves: number 
   return total / maxValue;
 }
 
-// Generate 2-3 large, round lakes and return water bodies
+// Generate lakes
 function generateLakes(
   grid: Tile[][],
   size: number,
@@ -68,8 +69,8 @@ function generateLakes(
 
   // Find lake seed points
   const lakeCenters: { x: number; y: number; noise: number }[] = [];
-  const minDistFromEdge = Math.max(8, Math.floor(size * 0.15)); // Keep lakes away from ocean edges
-  const minDistBetweenLakes = Math.max(size * 0.2, 10); // Adaptive but ensure minimum separation
+  const minDistFromEdge = Math.max(8, Math.floor(size * 0.15));
+  const minDistBetweenLakes = Math.max(size * 0.2, 10);
 
   // Collect all potential lake centers with adaptive threshold
   let threshold = 0.5;
@@ -77,13 +78,13 @@ function generateLakes(
   const maxAttempts = 3;
 
   while (lakeCenters.length < 2 && attempts < maxAttempts) {
-    lakeCenters.length = 0; // Reset for this attempt
+    lakeCenters.length = 0;
 
     for (let y = minDistFromEdge; y < size - minDistFromEdge; y++) {
       for (let x = minDistFromEdge; x < size - minDistFromEdge; x++) {
         const noiseVal = lakeNoise(x, y);
 
-        // Check if this is a good lake center (low noise value)
+        // Check if this is a good lake center
         if (noiseVal < threshold) {
           // Check distance from other lake centers
           let tooClose = false;
@@ -102,18 +103,15 @@ function generateLakes(
       }
     }
 
-    // If we found enough centers, break
     if (lakeCenters.length >= 2) break;
 
-    // Otherwise, relax the threshold for next attempt
     threshold += 0.1;
     attempts++;
   }
 
-  // If still no centers found, force create at least 2 lakes at strategic positions
+  // If still no centers found, force create at least 2 lakes
   if (lakeCenters.length === 0) {
-    // Place lakes at strategic positions, ensuring they're far enough from edges
-    const safeZone = minDistFromEdge + 5; // Extra buffer for lake growth
+    const safeZone = minDistFromEdge + 5;
     const quarterSize = Math.max(safeZone, Math.floor(size / 4));
     const threeQuarterSize = Math.min(size - safeZone, Math.floor((size * 3) / 4));
     lakeCenters.push(
@@ -133,15 +131,14 @@ function generateLakes(
 
   // Sort by noise value (lowest first) and pick 2-3 best candidates
   lakeCenters.sort((a, b) => a.noise - b.noise);
-  const numLakes = 2 + Math.floor(Math.random() * 2); // 2 or 3 lakes
+  const numLakes = 2 + Math.floor(Math.random() * 2);
   const selectedCenters = lakeCenters.slice(0, Math.min(numLakes, lakeCenters.length));
 
   const waterBodies: WaterBody[] = [];
   const usedLakeNames = new Set<string>();
 
-  // Grow lakes from each center using radial expansion for rounder shapes
+  // Grow lakes from each center
   for (const center of selectedCenters) {
-    // Target size: 40-80 tiles for bigger lakes
     const targetSize = 40 + Math.floor(Math.random() * 41);
     const lakeTiles: { x: number; y: number }[] = [{ x: center.x, y: center.y }];
     const candidates: { x: number; y: number; dist: number; noise: number }[] = [];
@@ -172,19 +169,16 @@ function generateLakes(
       }
     }
 
-    // Grow lake by adding adjacent tiles, prioritizing:
-    // 1. Closer to center (for rounder shape)
-    // 2. Lower noise values (for organic shape)
+    // Grow lake by adding adjacent tiles
     while (lakeTiles.length < targetSize && candidates.length > 0) {
-      // Sort by distance from center first, then noise
       candidates.sort((a, b) => {
         if (Math.abs(a.dist - b.dist) < 0.5) {
-          return a.noise - b.noise; // If similar distance, prefer lower noise
+          return a.noise - b.noise;
         }
-        return a.dist - b.dist; // Prefer closer tiles for rounder shape
+        return a.dist - b.dist;
       });
 
-      // Pick from top candidates (closest/lowest noise)
+      // Pick from top candidates
       const pickIndex = Math.floor(Math.random() * Math.min(5, candidates.length));
       const picked = candidates.splice(pickIndex, 1)[0];
 
@@ -218,10 +212,10 @@ function generateLakes(
     // Apply lake tiles to grid
     for (const tile of lakeTiles) {
       grid[tile.y][tile.x].building = createBuilding('water');
-      grid[tile.y][tile.x].landValue = 60; // Water increases nearby land value
+      grid[tile.y][tile.x].landValue = 60;
     }
 
-    // Calculate center for labeling
+    // Calculate center
     const avgX = lakeTiles.reduce((sum, t) => sum + t.x, 0) / lakeTiles.length;
     const avgY = lakeTiles.reduce((sum, t) => sum + t.y, 0) / lakeTiles.length;
 
@@ -254,12 +248,10 @@ function generateOceans(
   createBuilding: (type: BuildingType) => Building
 ): WaterBody[] {
   const waterBodies: WaterBody[] = [];
-  const oceanChance = 0.4; // 40% chance per edge
+  const oceanChance = 0.4;
 
-  // Use noise for coastline variation
   const coastNoise = (x: number, y: number) => perlinNoise(x, y, seed + 2000, 3);
 
-  // Check each edge independently
   const edges: Array<{
     side: 'north' | 'east' | 'south' | 'west';
     tiles: { x: number; y: number }[];
@@ -270,24 +262,21 @@ function generateOceans(
   const depthVariation = Math.max(4, Math.floor(size * 0.08));
   const maxDepth = Math.floor(size * 0.18);
 
-  // Helper to generate organic ocean section along an edge
+  // Helper to generate ocean section along an edge
   const generateOceanEdge = (
     isHorizontal: boolean,
-    edgePosition: number, // 0 for north/west, size-1 for south/east
-    inwardDirection: 1 | -1 // 1 = increasing coord, -1 = decreasing coord
+    edgePosition: number,
+    inwardDirection: 1 | -1
   ): { x: number; y: number }[] => {
     const tiles: { x: number; y: number }[] = [];
 
-    // Randomize the span of the ocean (40-80% of edge, not full length)
+    // Randomize the span of the ocean
     const spanStart = Math.floor(size * (0.05 + Math.random() * 0.25));
     const spanEnd = Math.floor(size * (0.7 + Math.random() * 0.25));
 
     for (let i = spanStart; i < spanEnd; i++) {
-      // Use noise to determine depth at this position, with fade at edges
       const edgeFade = Math.min((i - spanStart) / 5, (spanEnd - i) / 5, 1);
 
-      // Layer two noise frequencies for more interesting coastline
-      // Higher frequency noise for fine detail, lower for broad shape
       const coarseNoise = coastNoise(
         isHorizontal ? i * 0.08 : edgePosition * 0.08,
         isHorizontal ? edgePosition * 0.08 : i * 0.08
@@ -298,7 +287,6 @@ function generateOceans(
       );
       const noiseVal = coarseNoise * 0.6 + fineNoise * 0.4;
 
-      // Depth varies based on noise and fades at the ends
       const rawDepth = baseDepth + (noiseVal - 0.5) * depthVariation * 2.5;
       const localDepth = Math.max(1, Math.min(Math.floor(rawDepth * edgeFade), maxDepth));
 
@@ -394,16 +382,16 @@ export function generateTerrain(
     grid.push(row);
   }
 
-  // Second pass: add lakes (small contiguous water regions)
+  // Second pass: add lakes
   const lakeBodies = generateLakes(grid, size, seed, createBuilding);
 
-  // Third pass: add oceans on edges (sometimes)
+  // Third pass: add oceans
   const oceanBodies = generateOceans(grid, size, seed, createBuilding);
 
   // Combine all water bodies
   const waterBodies = [...lakeBodies, ...oceanBodies];
 
-  // Fourth pass: add scattered trees (avoiding water)
+  // Fourth pass: add scattered trees
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       if (grid[y][x].building.type === 'water') continue; // Don't place trees on water
@@ -411,7 +399,7 @@ export function generateTerrain(
       const treeNoise = perlinNoise(x * 2, y * 2, seed + 500, 2);
       const isTree = treeNoise > 0.72 && Math.random() > 0.65;
 
-      // Also add some trees near water for visual appeal
+      // Also add some trees close to water
       const nearWater = isNearWater(grid, x, y, size);
       const isTreeNearWater = nearWater && Math.random() > 0.7;
 

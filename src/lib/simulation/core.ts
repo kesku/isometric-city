@@ -1,10 +1,25 @@
 import { Tile, Building, BuildingType, Budget, Stats, ServiceCoverage } from '@/types/game';
 
-// Building types that don't require construction (already complete when placed)
+import { isMobile } from 'react-device-detect';
+
+// Default grid size for new games
+export const DEFAULT_GRID_SIZE = isMobile ? 50 : 70;
+
+// Building types that don't require construction, and are already complete when placed
 export const NO_CONSTRUCTION_TYPES: BuildingType[] = ['grass', 'empty', 'water', 'road', 'tree'];
 
+// Service building configuration
+export const SERVICE_CONFIG = {
+  police_station: { range: 13, rangeSquared: 169, type: 'police' as const, requiresRoad: true },
+  fire_station: { range: 18, rangeSquared: 324, type: 'fire' as const, requiresRoad: true },
+  hospital: { range: 12, rangeSquared: 144, type: 'health' as const, requiresRoad: true },
+  school: { range: 11, rangeSquared: 121, type: 'education' as const, requiresRoad: true },
+  university: { range: 19, rangeSquared: 361, type: 'education' as const, requiresRoad: true },
+  power_plant: { range: 15, rangeSquared: 225, requiresRoad: false },
+  water_tower: { range: 12, rangeSquared: 144, requiresRoad: false },
+} as const;
+
 export function createBuilding(type: BuildingType): Building {
-  // Buildings that don't require construction start at 100% complete
   const constructionProgress = NO_CONSTRUCTION_TYPES.includes(type) ? 100 : 0;
 
   return {
@@ -69,10 +84,7 @@ export function createInitialStats(): Stats {
   };
 }
 
-// PERF: Optimized service coverage grid creation
-// Uses typed arrays internally for faster operations
 export function createServiceCoverage(size: number): ServiceCoverage {
-  // Pre-allocate arrays with correct size to avoid resizing
   const createGrid = () => {
     const grid: number[][] = new Array(size);
     for (let y = 0; y < size; y++) {
@@ -99,12 +111,10 @@ export function createServiceCoverage(size: number): ServiceCoverage {
   };
 }
 
-// Generate a UUID v4
 export function generateUUID(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
   }
-  // Fallback for older environments
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
