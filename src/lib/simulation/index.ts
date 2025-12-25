@@ -7,3 +7,4 @@ export * from './economy';
 export * from './development';
 export * from './coreLoop';
 export * from './initialState';
+export * from './storage';

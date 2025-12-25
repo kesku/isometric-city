@@ -20,6 +20,24 @@ import {
   simulateTick,
   checkForDiscoverableCities,
   generateRandomAdvancedCity,
+  loadGameState,
+  saveGameState,
+  clearGameState,
+  loadSpritePackId,
+  saveSpritePackId,
+  loadDayNightMode,
+  saveDayNightMode,
+  saveCityForRestore,
+  loadSavedCityInfo,
+  loadSavedCityState,
+  clearSavedCityStorage,
+  loadSavedCitiesIndex,
+  saveCityState,
+  loadCityState,
+  deleteCityState,
+  saveSavedCitiesIndex,
+  DayNightMode,
+  SavedCityInfo,
 } from '@/lib/simulation/index';
 import {
   SPRITE_PACKS,
@@ -29,22 +47,7 @@ import {
   SpritePack,
 } from '@/lib/renderConfig';
 
-const STORAGE_KEY = 'isocity-game-state';
-const SAVED_CITY_STORAGE_KEY = 'isocity-saved-city'; // For restoring after viewing shared city
-const SAVED_CITIES_INDEX_KEY = 'isocity-saved-cities-index'; // Index of all saved cities
-const SAVED_CITY_PREFIX = 'isocity-city-'; // Prefix for individual saved city states
-const SPRITE_PACK_STORAGE_KEY = 'isocity-sprite-pack';
-const DAY_NIGHT_MODE_STORAGE_KEY = 'isocity-day-night-mode';
-
-export type DayNightMode = 'auto' | 'day' | 'night';
-
-// Info about a saved city (for restore functionality)
-export type SavedCityInfo = {
-  cityName: string;
-  population: number;
-  money: number;
-  savedAt: number;
-} | null;
+export type { DayNightMode, SavedCityInfo };
 
 type GameContextValue = {
   state: GameState;
@@ -157,346 +160,6 @@ const toolZoneMap: Partial<Record<Tool, ZoneType>> = {
   zone_industrial: 'industrial',
   zone_dezone: 'none',
 };
-
-// Load game state from localStorage
-function loadGameState(): GameState | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      // Validate it has essential properties
-      if (
-        parsed &&
-        parsed.grid &&
-        Array.isArray(parsed.grid) &&
-        parsed.gridSize &&
-        typeof parsed.gridSize === 'number' &&
-        parsed.stats &&
-        parsed.stats.money !== undefined &&
-        parsed.stats.population !== undefined
-      ) {
-        // Migrate park_medium to park_large
-        if (parsed.grid) {
-          for (let y = 0; y < parsed.grid.length; y++) {
-            for (let x = 0; x < parsed.grid[y].length; x++) {
-              if (parsed.grid[y][x]?.building?.type === 'park_medium') {
-                parsed.grid[y][x].building.type = 'park_large';
-              }
-            }
-          }
-        }
-        // Migrate selectedTool if it's park_medium
-        if (parsed.selectedTool === 'park_medium') {
-          parsed.selectedTool = 'park_large';
-        }
-        // Ensure adjacentCities and waterBodies exist for backward compatibility
-        if (!parsed.adjacentCities) {
-          parsed.adjacentCities = [];
-        }
-        // Migrate adjacentCities to have 'discovered' property
-        for (const city of parsed.adjacentCities) {
-          if (city.discovered === undefined) {
-            // Old cities that exist are implicitly discovered (they were visible in the old system)
-            city.discovered = true;
-          }
-        }
-        if (!parsed.waterBodies) {
-          parsed.waterBodies = [];
-        }
-        // Ensure hour exists for day/night cycle
-        if (parsed.hour === undefined) {
-          parsed.hour = 12; // Default to noon
-        }
-        // Ensure effectiveTaxRate exists for lagging tax effect
-        if (parsed.effectiveTaxRate === undefined) {
-          parsed.effectiveTaxRate = parsed.taxRate ?? 9; // Start at current tax rate
-        }
-        // Migrate constructionProgress for existing buildings (they're already built)
-        if (parsed.grid) {
-          for (let y = 0; y < parsed.grid.length; y++) {
-            for (let x = 0; x < parsed.grid[y].length; x++) {
-              if (
-                parsed.grid[y][x]?.building &&
-                parsed.grid[y][x].building.constructionProgress === undefined
-              ) {
-                parsed.grid[y][x].building.constructionProgress = 100; // Existing buildings are complete
-              }
-              // Migrate abandoned property for existing buildings (they're not abandoned)
-              if (
-                parsed.grid[y][x]?.building &&
-                parsed.grid[y][x].building.abandoned === undefined
-              ) {
-                parsed.grid[y][x].building.abandoned = false;
-              }
-            }
-          }
-        }
-        // Ensure gameVersion exists for backward compatibility
-        if (parsed.gameVersion === undefined) {
-          parsed.gameVersion = 0;
-        }
-        // Migrate to include UUID if missing
-        if (!parsed.id) {
-          parsed.id = generateUUID();
-        }
-        return parsed as GameState;
-      } else {
-        localStorage.removeItem(STORAGE_KEY);
-      }
-    }
-  } catch (e) {
-    console.error('Failed to load game state:', e);
-    // Clear corrupted data
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch (clearError) {
-      console.error('Failed to clear corrupted game state:', clearError);
-    }
-  }
-  return null;
-}
-
-// Save game state to localStorage
-function saveGameState(state: GameState): void {
-  if (typeof window === 'undefined') return;
-  try {
-    // Validate state before saving
-    if (!state || !state.grid || !state.gridSize || !state.stats) {
-      console.error('Invalid game state, cannot save', {
-        state,
-        hasGrid: !!state?.grid,
-        hasGridSize: !!state?.gridSize,
-        hasStats: !!state?.stats,
-      });
-      return;
-    }
-
-    const serialized = JSON.stringify(state);
-
-    // Check if data is too large (localStorage has ~5-10MB limit)
-    if (serialized.length > 5 * 1024 * 1024) {
-      return;
-    }
-
-    localStorage.setItem(STORAGE_KEY, serialized);
-  } catch (e) {
-    // Handle quota exceeded errors
-    if (e instanceof DOMException && (e.code === 22 || e.code === 1014)) {
-      console.error('localStorage quota exceeded, cannot save game state');
-    } else {
-      console.error('Failed to save game state:', e);
-    }
-  }
-}
-
-// Clear saved game state
-function clearGameState(): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch (e) {
-    console.error('Failed to clear game state:', e);
-  }
-}
-
-// Load sprite pack from localStorage
-function loadSpritePackId(): string {
-  if (typeof window === 'undefined') return DEFAULT_SPRITE_PACK_ID;
-  try {
-    const saved = localStorage.getItem(SPRITE_PACK_STORAGE_KEY);
-    if (saved && SPRITE_PACKS.some((p) => p.id === saved)) {
-      return saved;
-    }
-  } catch (e) {
-    console.error('Failed to load sprite pack preference:', e);
-  }
-  return DEFAULT_SPRITE_PACK_ID;
-}
-
-// Save sprite pack to localStorage
-function saveSpritePackId(packId: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(SPRITE_PACK_STORAGE_KEY, packId);
-  } catch (e) {
-    console.error('Failed to save sprite pack preference:', e);
-  }
-}
-
-// Load day/night mode from localStorage
-function loadDayNightMode(): DayNightMode {
-  if (typeof window === 'undefined') return 'auto';
-  try {
-    const saved = localStorage.getItem(DAY_NIGHT_MODE_STORAGE_KEY);
-    if (saved === 'auto' || saved === 'day' || saved === 'night') {
-      return saved;
-    }
-  } catch (e) {
-    console.error('Failed to load day/night mode preference:', e);
-  }
-  return 'auto';
-}
-
-// Save day/night mode to localStorage
-function saveDayNightMode(mode: DayNightMode): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(DAY_NIGHT_MODE_STORAGE_KEY, mode);
-  } catch (e) {
-    console.error('Failed to save day/night mode preference:', e);
-  }
-}
-
-// Save current city for later restoration (when viewing shared cities)
-function saveCityForRestore(state: GameState): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const savedData = {
-      state: state,
-      info: {
-        cityName: state.cityName,
-        population: state.stats.population,
-        money: state.stats.money,
-        savedAt: Date.now(),
-      },
-    };
-    localStorage.setItem(SAVED_CITY_STORAGE_KEY, JSON.stringify(savedData));
-  } catch (e) {
-    console.error('Failed to save city for restore:', e);
-  }
-}
-
-// Load saved city info (just metadata, not full state)
-function loadSavedCityInfo(): SavedCityInfo {
-  if (typeof window === 'undefined') return null;
-  try {
-    const saved = localStorage.getItem(SAVED_CITY_STORAGE_KEY);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (parsed.info) {
-        return parsed.info as SavedCityInfo;
-      }
-    }
-  } catch (e) {
-    console.error('Failed to load saved city info:', e);
-  }
-  return null;
-}
-
-// Load full saved city state
-function loadSavedCityState(): GameState | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const saved = localStorage.getItem(SAVED_CITY_STORAGE_KEY);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (parsed.state && parsed.state.grid && parsed.state.gridSize && parsed.state.stats) {
-        return parsed.state as GameState;
-      }
-    }
-  } catch (e) {
-    console.error('Failed to load saved city state:', e);
-  }
-  return null;
-}
-
-// Clear saved city
-function clearSavedCityStorage(): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.removeItem(SAVED_CITY_STORAGE_KEY);
-  } catch (e) {
-    console.error('Failed to clear saved city:', e);
-  }
-}
-
-// Generate a UUID v4
-function generateUUID(): string {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  // Fallback for older environments
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
-// Load saved cities index from localStorage
-function loadSavedCitiesIndex(): SavedCityMeta[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const saved = localStorage.getItem(SAVED_CITIES_INDEX_KEY);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed)) {
-        return parsed as SavedCityMeta[];
-      }
-    }
-  } catch (e) {
-    console.error('Failed to load saved cities index:', e);
-  }
-  return [];
-}
-
-// Save saved cities index to localStorage
-function saveSavedCitiesIndex(cities: SavedCityMeta[]): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(SAVED_CITIES_INDEX_KEY, JSON.stringify(cities));
-  } catch (e) {
-    console.error('Failed to save cities index:', e);
-  }
-}
-
-// Save a city state to localStorage
-function saveCityState(cityId: string, state: GameState): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const serialized = JSON.stringify(state);
-    // Check if data is too large
-    if (serialized.length > 5 * 1024 * 1024) {
-      console.error('City state too large to save');
-      return;
-    }
-    localStorage.setItem(SAVED_CITY_PREFIX + cityId, serialized);
-  } catch (e) {
-    if (e instanceof DOMException && (e.code === 22 || e.code === 1014)) {
-      console.error('localStorage quota exceeded');
-    } else {
-      console.error('Failed to save city state:', e);
-    }
-  }
-}
-
-// Load a saved city state from localStorage
-function loadCityState(cityId: string): GameState | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const saved = localStorage.getItem(SAVED_CITY_PREFIX + cityId);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (parsed && parsed.grid && parsed.gridSize && parsed.stats) {
-        return parsed as GameState;
-      }
-    }
-  } catch (e) {
-    console.error('Failed to load city state:', e);
-  }
-  return null;
-}
-
-// Delete a saved city from localStorage
-function deleteCityState(cityId: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.removeItem(SAVED_CITY_PREFIX + cityId);
-  } catch (e) {
-    console.error('Failed to delete city state:', e);
-  }
-}
 
 export function GameProvider({ children }: { children: React.ReactNode }) {
   // Start with a default state, we'll load from localStorage after mount
